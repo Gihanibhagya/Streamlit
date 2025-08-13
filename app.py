@@ -2,155 +2,203 @@ import streamlit as st
 import pandas as pd
 import pickle
 import numpy as np
+import os
 import matplotlib.pyplot as plt
 import seaborn as sns
-import os
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.ensemble import RandomForestClassifier
 
+# ------------------ App Config ------------------
+st.set_page_config(page_title="Academic Stress Predictor", layout="wide")
+MODEL_FILE = "model.pkl"
 
-def looks_like_datetime(series, threshold=0.8):
-    """Return True if >=threshold fraction of values parse as datetimes."""
-    try:
-        parsed = pd.to_datetime(series, errors='coerce')
-        return parsed.notna().sum() >= int(len(series) * threshold)
-    except Exception:
-        return False
-
-def safe_label_map(series, classes):
-    """Map values in series to indices using classes list. Unseen -> -1."""
-    mapping = {v: i for i, v in enumerate(classes)}
-    return series.map(mapping).fillna(-1).astype(int)
-
-
+# ------------------ Helper Functions ------------------
 @st.cache_data
-def load_data():
-    return pd.read_csv('data/academicStress.csv')
+def load_csv(uploaded_file):
+    return pd.read_csv(uploaded_file)
 
-@st.cache_resource
+def save_model(model_data):
+    with open(MODEL_FILE, "wb") as f:
+        pickle.dump(model_data, f)
+
 def load_model():
-    if not os.path.exists("model.pkl"):
-        st.error("❌ model.pkl not found. Please train and save the model first.")
-        st.stop()
-
-    try:
-        with open("model.pkl", "rb") as f:
+    if os.path.exists(MODEL_FILE):
+        with open(MODEL_FILE, "rb") as f:
             return pickle.load(f)
-    except pickle.UnpicklingError:
-        st.error("❌ model.pkl is corrupted or not a valid pickle file.")
-        st.stop()
+    return None
 
-df = load_data()
-model_data = load_model()
-
-
-model = model_data.get('model')
-scaler = model_data.get('scaler')
-preprocessor = model_data.get('preprocessor')
-encoders_dict = model_data.get('encoders')  
-feature_names = model_data.get('feature_names')  
-target_encoder = model_data.get('target_encoder')  
-saved_metrics = model_data.get('metrics')
-
+# ------------------ Sidebar Navigation ------------------
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["Home", "Data Exploration", "Visualisations", "Model Prediction"])
+page = st.sidebar.radio("Go to", ["Home", "Data Exploration", "Train Model", "Model Prediction", "Model Performance"])
 
-TARGET_COLUMN_DEFAULT = df.columns[-1]
-
-
+# ------------------ Home Page ------------------
 if page == "Home":
-    st.title("Academic Stress Prediction App")
-    st.write("This app predicts academic stress levels based on survey data.")
-    if os.path.exists('images.jpeg'):
-        st.image('images.jpeg', caption="Understanding Academic Stress", use_container_width=True)
+    st.title("🎓 Academic Stress Predictor")
+    st.image("https://images.unsplash.com/photo-1503676260728-1c00da094a0b", use_container_width=True)
+    st.markdown("""
+    Welcome to the **Academic Stress Predictor**!  
+    This tool allows you to:
+    - Upload your dataset
+    - Train a machine learning model
+    - Predict academic stress levels
+    - View model performance metrics
+    - Explore your data visually  
+    Use the sidebar to navigate through the app.
+    """)
 
+# ------------------ Data Exploration Page ------------------
 elif page == "Data Exploration":
-    st.subheader("Dataset Overview")
-    st.write(f"Shape: {df.shape}")
-    st.write(df.dtypes)
-    st.dataframe(df.head())
-    column = st.selectbox("Filter by column", df.columns)
-    val = st.selectbox("Select value", df[column].unique())
-    st.write(df[df[column] == val])
+    st.header("📊 Data Exploration")
+    uploaded_file = st.file_uploader("Upload CSV Dataset for Exploration", type=["csv"])
+    if uploaded_file:
+        df = load_csv(uploaded_file)
+        st.subheader("Dataset Preview")
+        st.write(df.head())
 
-elif page == "Visualisations":
-    st.subheader("Visualisations")
-    TARGET_COLUMN = st.selectbox("Target column (for plotting)", df.columns, index=len(df.columns)-1)
-    fig, ax = plt.subplots()
-    sns.countplot(data=df, x=TARGET_COLUMN, ax=ax)
-    ax.set_title(f"Countplot of {TARGET_COLUMN}")
-    st.pyplot(fig)
+        st.subheader("Basic Statistics")
+        st.write(df.describe(include="all"))
 
-    numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
-    if numeric_cols:
-        fig, ax = plt.subplots()
-        sns.boxplot(data=df, x=TARGET_COLUMN, y=numeric_cols[0], ax=ax)
-        ax.set_title(f"Boxplot of {numeric_cols[0]} by {TARGET_COLUMN}")
-        st.pyplot(fig)
-    else:
-        st.info("No numeric columns available for boxplot visualization.")
+        st.subheader("Missing Values")
+        st.write(df.isnull().sum())
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    sns.heatmap(df.corr(numeric_only=True), annot=True, cmap='coolwarm', ax=ax)
-    ax.set_title("Correlation Heatmap")
-    st.pyplot(fig)
+        # Numeric Distribution
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        if numeric_cols:
+            st.subheader("Numeric Column Distributions")
+            for col in numeric_cols:
+                fig, ax = plt.subplots()
+                sns.histplot(df[col], kde=True, ax=ax)
+                ax.set_title(f"Distribution of {col}")
+                st.pyplot(fig)
 
+        # Categorical Counts
+        cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+        if cat_cols:
+            st.subheader("Categorical Column Counts")
+            for col in cat_cols:
+                fig, ax = plt.subplots()
+                df[col].value_counts().plot(kind='bar', ax=ax)
+                ax.set_title(f"Value Counts of {col}")
+                st.pyplot(fig)
+
+# ------------------ Train Model Page ------------------
+elif page == "Train Model":
+    st.header("Train Model")
+    uploaded_file = st.file_uploader("Upload CSV Dataset", type=["csv"])
+    if uploaded_file:
+        df = load_csv(uploaded_file)
+        st.write("Preview of dataset:", df.head())
+
+        # Drop Timestamp column if exists
+        if "Timestamp" in df.columns:
+            df = df.drop(columns=["Timestamp"])
+            st.info("Dropped 'Timestamp' column for training.")
+
+        target_col = st.selectbox("Select Target Column", df.columns)
+        if st.button("Train Model"):
+            try:
+                X = df.drop(columns=[target_col])
+                y = df[target_col]
+
+                # Encode categorical variables
+                encoders_dict = {}
+                for col in X.select_dtypes(include=['object', 'category']).columns:
+                    le = LabelEncoder()
+                    X[col] = le.fit_transform(X[col])
+                    encoders_dict[col] = le
+
+                # Encode target
+                target_encoder = LabelEncoder()
+                y = target_encoder.fit_transform(y)
+
+                # Train/test split
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y, test_size=0.2, random_state=42
+                )
+
+                # Scale features
+                scaler = StandardScaler()
+                X_train = scaler.fit_transform(X_train)
+                X_test = scaler.transform(X_test)
+
+                # Train RandomForest
+                model = RandomForestClassifier(random_state=42)
+                model.fit(X_train, y_train)
+
+                # Predictions
+                y_pred = model.predict(X_test)
+
+                # Metrics
+                accuracy = accuracy_score(y_test, y_pred)
+                class_report = classification_report(y_test, y_pred)
+                conf_matrix = confusion_matrix(y_test, y_pred)
+
+                # Save all to pickle
+                model_data = {
+                    "model": model,
+                    "scaler": scaler,
+                    "encoders": encoders_dict,
+                    "target_encoder": target_encoder,
+                    "feature_names": X.columns.tolist(),
+                    "metrics": {
+                        "accuracy": accuracy,
+                        "classification_report": class_report,
+                        "confusion_matrix": conf_matrix.tolist()
+                    }
+                }
+                save_model(model_data)
+                st.success(f"Model trained successfully! Accuracy: {accuracy:.2%}")
+            except Exception as e:
+                st.error(f"Training failed: {e}")
+
+# ------------------ Model Prediction Page ------------------
 elif page == "Model Prediction":
-    st.subheader("Make a Prediction")
-
-    if feature_names:
-        FEATURE_COLUMNS = feature_names
+    st.header("Model Prediction")
+    model_data = load_model()
+    if not model_data:
+        st.error("No model found. Please train the model first.")
     else:
-        TARGET_COLUMN = df.columns[-1]
-        FEATURE_COLUMNS = [col for col in df.columns if col not in [TARGET_COLUMN, 'Timestamp']]
-
-    input_data = []
-    input_widgets = {}
-    for col in FEATURE_COLUMNS:
-        if col not in df.columns:
-            st.error(f"Feature '{col}' missing from the data!")
-            st.stop()
-
-        if df[col].dtype == 'object' or df[col].dtype.name == 'category':
-            vals = df[col].dropna().unique().tolist()
-            default_index = 0
-            val = st.selectbox(f"Select {col}", vals, index=default_index)
-            
-            if encoders_dict and col in encoders_dict:
-                enc = encoders_dict[col]
-                if hasattr(enc, 'classes_'):
-                    if val in enc.classes_:
-                        val_encoded = int(np.where(enc.classes_ == val)[0][0])
-                    else:
-                        val_encoded = -1
-                else:
-                    try:
-                        val_encoded = enc.transform([val])[0]
-                    except Exception:
-                        val_encoded = -1
+        user_input = []
+        for col in model_data["feature_names"]:
+            if col in model_data["encoders"]:
+                options = list(model_data["encoders"][col].classes_)
+                val = st.selectbox(f"Select {col}", options)
+                user_input.append(model_data["encoders"][col].transform([val])[0])
             else:
-                val_encoded = pd.factorize(df[col])[1].tolist().index(val) if val in pd.factorize(df[col])[1] else -1
-            input_data.append(val_encoded)
+                val = st.number_input(f"Enter {col}", value=0.0)
+                user_input.append(val)
+
+        if st.button("Predict"):
+            try:
+                input_df = pd.DataFrame([user_input], columns=model_data["feature_names"])
+                scaled_input = model_data["scaler"].transform(input_df)
+                pred = model_data["model"].predict(scaled_input)[0]
+                pred_label = model_data["target_encoder"].inverse_transform([pred])[0]
+                st.success(f"Prediction: {pred_label}")
+            except Exception as e:
+                st.error(f"Prediction failed: {e}")
+
+# ------------------ Model Performance Page ------------------
+elif page == "Model Performance":
+    st.header("Model Performance")
+    model_data = load_model()
+    if not model_data:
+        st.error("No saved metrics found. Please train the model first.")
+    else:
+        metrics = model_data.get("metrics", None)
+        if not metrics:
+            st.error("No saved metrics found in model file.")
         else:
-            val = st.number_input(f"Enter {col}", float(df[col].min()), float(df[col].max()), value=float(df[col].median()))
-            input_data.append(val)
+            st.write(f"**Accuracy:** {metrics['accuracy']:.2%}")
+            st.text("Classification Report:")
+            st.text(metrics["classification_report"])
 
-    if st.button("Predict"):
-        try:
-            input_array = np.array([input_data])
-            if scaler is not None and hasattr(scaler, 'transform'):
-                input_array = scaler.transform(input_array)
-            prediction = model.predict(input_array)[0]
-            if target_encoder is not None and hasattr(target_encoder, 'inverse_transform'):
-                try:
-                    prediction_label = target_encoder.inverse_transform([prediction])[0]
-                except Exception:
-                    prediction_label = prediction
-            else:
-                prediction_label = prediction
-
-            prob = model.predict_proba(input_array)[0] if hasattr(model, 'predict_proba') else None
-            st.success(f"Prediction: {prediction_label}")
-            if prob is not None:
-                st.info(f"Confidence: {max(prob)*100:.2f}%")
-        except Exception as e:
-            st.error(f"Prediction failed: {e}")
+            # Confusion Matrix Heatmap
+            conf_matrix = np.array(metrics["confusion_matrix"])
+            fig, ax = plt.subplots()
+            sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', ax=ax)
+            ax.set_xlabel("Predicted")
+            ax.set_ylabel("Actual")
+            st.pyplot(fig)
