@@ -10,11 +10,11 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.ensemble import RandomForestClassifier
 
-# ------------------ App Config ------------------
+
 st.set_page_config(page_title="Academic Stress Predictor", layout="wide")
 MODEL_FILE = "model.pkl"
 
-# ------------------ Helper Functions ------------------
+
 @st.cache_data
 def load_csv(uploaded_file):
     return pd.read_csv(uploaded_file)
@@ -29,11 +29,10 @@ def load_model():
             return pickle.load(f)
     return None
 
-# ------------------ Sidebar Navigation ------------------
+
 st.sidebar.title("Navigation")
 page = st.sidebar.radio("Go to", ["Home", "Data Exploration", "Train Model", "Model Prediction", "Model Performance"])
 
-# ------------------ Home Page ------------------
 if page == "Home":
     st.title("🎓 Academic Stress Predictor")
     st.image("https://images.unsplash.com/photo-1503676260728-1c00da094a0b", use_container_width=True)
@@ -48,7 +47,7 @@ if page == "Home":
     Use the sidebar to navigate through the app.
     """)
 
-# ------------------ Data Exploration Page ------------------
+
 elif page == "Data Exploration":
     st.header("📊 Data Exploration")
     uploaded_file = st.file_uploader("Upload CSV Dataset for Exploration", type=["csv"])
@@ -63,7 +62,7 @@ elif page == "Data Exploration":
         st.subheader("Missing Values")
         st.write(df.isnull().sum())
 
-        # Numeric Distribution
+        
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         if numeric_cols:
             st.subheader("Numeric Column Distributions")
@@ -73,7 +72,7 @@ elif page == "Data Exploration":
                 ax.set_title(f"Distribution of {col}")
                 st.pyplot(fig)
 
-        # Categorical Counts
+        
         cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
         if cat_cols:
             st.subheader("Categorical Column Counts")
@@ -83,7 +82,7 @@ elif page == "Data Exploration":
                 ax.set_title(f"Value Counts of {col}")
                 st.pyplot(fig)
 
-# ------------------ Train Model Page ------------------
+
 elif page == "Train Model":
     st.header("Train Model")
     uploaded_file = st.file_uploader("Upload CSV Dataset", type=["csv"])
@@ -91,7 +90,7 @@ elif page == "Train Model":
         df = load_csv(uploaded_file)
         st.write("Preview of dataset:", df.head())
 
-        # Drop Timestamp column if exists
+        
         if "Timestamp" in df.columns:
             df = df.drop(columns=["Timestamp"])
             st.info("Dropped 'Timestamp' column for training.")
@@ -102,40 +101,40 @@ elif page == "Train Model":
                 X = df.drop(columns=[target_col])
                 y = df[target_col]
 
-                # Encode categorical variables
+                
                 encoders_dict = {}
                 for col in X.select_dtypes(include=['object', 'category']).columns:
                     le = LabelEncoder()
                     X[col] = le.fit_transform(X[col])
                     encoders_dict[col] = le
 
-                # Encode target
+                
                 target_encoder = LabelEncoder()
                 y = target_encoder.fit_transform(y)
 
-                # Train/test split
+                
                 X_train, X_test, y_train, y_test = train_test_split(
                     X, y, test_size=0.2, random_state=42
                 )
 
-                # Scale features
+                
                 scaler = StandardScaler()
                 X_train = scaler.fit_transform(X_train)
                 X_test = scaler.transform(X_test)
 
-                # Train RandomForest
+                
                 model = RandomForestClassifier(random_state=42)
                 model.fit(X_train, y_train)
 
-                # Predictions
+                
                 y_pred = model.predict(X_test)
 
-                # Metrics
+                
                 accuracy = accuracy_score(y_test, y_pred)
                 class_report = classification_report(y_test, y_pred)
                 conf_matrix = confusion_matrix(y_test, y_pred)
 
-                # Save all to pickle
+               
                 model_data = {
                     "model": model,
                     "scaler": scaler,
@@ -153,7 +152,7 @@ elif page == "Train Model":
             except Exception as e:
                 st.error(f"Training failed: {e}")
 
-# ------------------ Model Prediction Page ------------------
+
 elif page == "Model Prediction":
     st.header("Model Prediction")
     model_data = load_model()
@@ -180,7 +179,7 @@ elif page == "Model Prediction":
             except Exception as e:
                 st.error(f"Prediction failed: {e}")
 
-# ------------------ Model Performance Page ------------------
+
 elif page == "Model Performance":
     st.header("Model Performance")
     model_data = load_model()
@@ -195,7 +194,7 @@ elif page == "Model Performance":
             st.text("Classification Report:")
             st.text(metrics["classification_report"])
 
-            # Confusion Matrix Heatmap
+            
             conf_matrix = np.array(metrics["confusion_matrix"])
             fig, ax = plt.subplots()
             sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', ax=ax)
